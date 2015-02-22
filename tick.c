@@ -1,27 +1,51 @@
-#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <time.h>
 
 #include "tick.h"
 
-suseconds_t nextHalfSec()
+static int wdfd = -1;
+static unsigned int modmask = 0x7f;
+
+void tickSetup( unsigned int frequency )
 {
-	suseconds_t result;
-	struct timeval tv;
+	char* wdenv = getenv( "WATCHDOG" );
 
-	gettimeofday( &tv, NULL );
-	result = 1000000 - tv.tv_usec;
+	if( frequency < 2 || frequency > 255 )
+		exit( 1 );
 
-	if( result >= 500000 )
-		result -= 500000;
+	if( wdenv != NULL && wdfd == -1 )
+		if( *wdenv == '1' )
+		{
+			wdfd = open( "/dev/watchdog", O_RDWR );
+			if( wdfd == -1 )
+			{
+				perror( "watchdog" );
+				exit( 1 );
+			}
+		}
 
-	return result;
+	modmask = 0x1ff;
+	for( ; frequency > 0; frequency /= 2 )
+		modmask /= 2;
 }
 
-suseconds_t nextQuatSec()
+void tickWait()
 {
-	suseconds_t result = nextHalfSec();
+	struct timespec tp;
+	unsigned int c;
 
-	if( result >= 250000 )
-		result -= 250000;
+	if( wdfd != -1 )
+		write( wdfd, ".", 1 );
 
-	return result;
+	clock_gettime( CLOCK_MONOTONIC, &tp );
+	c = ( 1000000000 - (unsigned int) tp.tv_nsec ) / 3906250;
+	c &= modmask;
+	c++;
+	const struct timespec sl = { 0, c * 3906250 };
+	nanosleep( &sl, NULL );
 }
